@@ -1,0 +1,11 @@
+# Belt-and-braces: these must never reach a deployment.
+# (Vercel already respects .gitignore, and .env is listed there too.)
+.env
+.env.*
+!.env.example
+
+.venv/
+venv/
+__pycache__/
+node_modules/
+.next/

@@ -1,0 +1,12 @@
+openai>=1.40
+python-dotenv>=1.0
+rich>=13.7
+gradio>=4.44
+langgraph>=0.2
+# vector store for the RAG system (rag/rag.py). We pass embeddings in ourselves,
+# so Chroma's own default embedding model is never downloaded or used.
+chromadb>=0.5
+# request classification (labs/classify.py) — a local zero-shot model, no API key.
+# Heavy (~2GB) but installed once; MAI_CLASSIFY=0 runs the kit without it.
+transformers>=4.44
+torch>=2.2

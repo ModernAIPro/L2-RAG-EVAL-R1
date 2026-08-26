@@ -1,0 +1,27 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+.chat_memory.json
+.memory/
+traces.jsonl
+memory.jsonl
+memory.jsonl.bak
+profile.json
+profile.json.tmp
+episodes/
+rag/.chroma/
+rag/results/
+
+# --- added for the web/ chatbot deploy ---
+# .env above covers the file holding the MAI key; these catch its variants and
+# anything the Vercel/Node tooling drops outside web/ (web/ has its own ignores).
+.env.*
+!.env.example
+.vercel
+node_modules/
+.next/
+*.tsbuildinfo
+npm-debug.log*

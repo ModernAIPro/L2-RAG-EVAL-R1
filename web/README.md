@@ -97,13 +97,24 @@ It **fails closed** — in production, a missing `CHAT_PASSWORD` locks the route
 rather than opening it, so a forgotten env var cannot silently expose your key.
 Locally it stays open so `npm run dev` needs no setup.
 
-To rotate the password:
+To rotate the password, from `web/`:
 
 ```bash
-vercel env rm CHAT_PASSWORD production
-vercel env add CHAT_PASSWORD production
-vercel --prod            # env vars only apply to new deployments
+npm run rotate
 ```
+
+That is `scripts/rotate-password.sh`. It generates a password, replaces it in all
+three Vercel environments, updates `../.env`, redeploys, checks the live site
+answers `200`, and prints the new password last. Point it elsewhere with
+`SITE=https://example.com npm run rotate`.
+
+The script pipes the value in rather than using `vercel env add`'s interactive
+prompt, which matters. Vercel
+stores production and preview variables as **sensitive**, meaning write-only: the
+dashboard, `vercel env ls` and `vercel env pull` all return `[SENSITIVE]` instead
+of the value, and there is no way to read it back. If you type it at the prompt
+and forget it, the only fix is another rotation. Rotate all three environments
+together, or preview deployments keep accepting the old password.
 
 This is a shared-secret gate, not user accounts: everyone shares one password and
 there is no per-visitor rate limiting, so treat the password as the whole of your

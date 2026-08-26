@@ -1,64 +1,96 @@
-# Modern AI Pro — Level 2 · AI Practitioner Labs
+# Chatbot — terminal and web
 
-The lab kit for the **AI Practitioner** weekend (Level 2 of the Modern AI Pro ladder).
-Every hands-on session of the course runs from this one repo. Labs ship and update
-**over the course via `git pull`** — clone once, pull each morning.
+A small chatbot in two forms, both talking to the Modern AI Pro class LLM proxy:
 
-## Setup (~15 minutes, do this before Day 1)
+- **`chatbot.py`** — a streaming terminal REPL.
+- **`web/`** — the same thing in the browser, a Next.js app deployed to Vercel.
+
+Live at **https://starkfarms.in** (password protected).
+
+This repo began as the Level 2 lab kit; the key-minting step below is inherited
+from it. The lab files themselves are not here — this is the chatbot work.
+
+## Setup
 
 ```bash
-git clone https://github.com/balajivis/mai-practitioner-labs.git
-cd mai-practitioner-labs
-python -m venv .venv && source .venv/bin/activate    # Windows: .venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 ```
 
-*Windows: activate with `.venv\Scripts\activate`. If `python` isn't found, use
-`python3` and `pip3` — common on macOS.*
+Mint your personal MAI key at
+[study.modernaipro.com/practice](https://study.modernaipro.com/practice) — it is
+shown exactly once — and paste it into `OPENAI_API_KEY` in `.env`. A shared class
+token works in the same slot. `OPENAI_BASE_URL` is already set to the class proxy.
 
-Then **mint your personal MAI key** at
-[study.modernaipro.com/practice](https://study.modernaipro.com/practice) (it shows exactly
-once) and paste it into `OPENAI_API_KEY` in your `.env`. A shared class token pinned in the
-cohort room on class days works in the same slot.
+> `requirements.txt` is the full lab kit's list. The chatbot itself only needs
+> `openai` and `python-dotenv`; the rest (`torch`, `transformers`, ~2GB) is
+> inherited and unused by this code.
 
-**Smoke-test** — proves Python, the install, and your key in one shot:
-
-```bash
-python labs/lab_1.py
-```
-
-If it greets you and your key is accepted, you are ready for Level 2.
-
-## The labs
-
-Run in order; each builds on the prior one. *(Labs land here move-by-move over the
-weekend — `git pull` at the start of every session.)*
-
-| Day | Lab | Name | Status |
-|---|---|---|---|
-| 1 (Fri) | 1 | **LLM Calls Done Right** — roles · structured output · streaming · retries · the cost meter | **live** |
-| 2 (Sat) | 2 | **A Chatbot Worth Shipping** — memory · context budget · persistence · the LLM-judged gate · Gradio | **live** |
-| 2 (Sat) | 3 | **Strong RAG, Proven** — chunking · hybrid (BM25+RRF) · citations · golden set + judge · ablation | **live** |
-| 3 (Sun) | 4 | **An Agent You Can Trust** — LangGraph · tools · agentic RAG · budget caps · HITL checkpoint | **live** |
-| 3 (Sun) | 5 | **Compose & Ship** — the capstone: one Gradio app wiring Labs 1–4, then your own corpus | **live** |
-
-The `corpus/` folder is Meridian Corp's policy binder — deliberately laced with
-multi-hop facts and a superseded policy version, so retrieval mistakes are
-visible. After class, swap it for documents from YOUR world: that version of
-Lab 5 is your portfolio piece.
-
-## Getting updates
+## Run the terminal chatbot
 
 ```bash
-git pull
+python chatbot.py
 ```
 
-Before you edit a lab, copy it (`cp labs/lab_2.py my_lab_2.py`) — editing `labs/*.py` in
-place causes a merge conflict on the next pull. Your `.env` is git-ignored; pulls never
-touch your key.
+Streams tokens as they arrive, keeps the conversation in memory, `exit` to quit.
 
-## Stuck?
+## Run the web chatbot
 
-The [FAQ](./labs/FAQ.md) covers the usual suspects. In class: ask in the cohort room, or
-flag an instructor.
+```bash
+cd web
+npm install
+npm run dev            # http://localhost:3000
+```
+
+There is no `.env` inside `web/` — the API route reads the repo-root `.env`, so
+one key file serves both chatbots. Set `MODEL=` there to use a model other than
+the `gpt-4o-mini` default.
+
+## Layout
+
+```
+chatbot.py                    terminal client
+requirements.txt              Python deps (lab kit's full list)
+.env                          your key — git-ignored, never commit
+web/
+  app/page.tsx                browser UI: messages in React state, streamed in
+  app/api/chat/route.ts       server: calls the LLM, holds the key, gates access
+  scripts/rotate-password.sh  npm run rotate
+  README.md                   deployment and security detail
+sessions/                     dated notes on why things are built this way
+```
+
+## How the key is protected
+
+The API key is read **only** in `web/app/api/chat/route.ts`, which runs on the
+server. The browser talks to `/api/chat` and never to the LLM provider. The
+variable has no `NEXT_PUBLIC_` prefix, which is the only mechanism that would
+inline it into the client bundle — confirmed by grepping the built `.next/static`
+output for the key value.
+
+Because the deployed `/api/chat` is a public URL that spends your quota, it is
+gated on a shared `CHAT_PASSWORD`, compared with `timingSafeEqual`. Vercel's own
+Deployment Protection does not cover this: its Standard Protection scope excludes
+production domains, and `starkfarms.in` is the production domain. The gate fails
+closed — a missing password in production locks the route rather than opening it.
+
+Local `npm run dev` has no gate unless you set `CHAT_PASSWORD` in `.env`.
+
+## Deploy and rotate
+
+```bash
+cd web
+vercel --prod          # deploy
+npm run rotate         # new password everywhere, redeploy, verify, print it
+```
+
+Full detail, including DNS and the Vercel settings, is in
+[`web/README.md`](./web/README.md).
+
+## Before starting new work
+
+Read the newest file in [`sessions/`](./sessions/). Those notes carry the
+reasoning behind decisions and the traps already paid for — for example that
+Vercel stores production env vars write-only, so a password typed at an
+interactive prompt cannot be recovered.

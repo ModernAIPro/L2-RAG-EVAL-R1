@@ -7,7 +7,7 @@ from openai import OpenAI
 
 load_dotenv()
 
-MODEL = os.getenv("MODEL", "gpt-4o-mini")
+MODEL = os.getenv("MODEL", "Llama 3.2")
 
 client = OpenAI()  # reads OPENAI_API_KEY and OPENAI_BASE_URL from .env
 

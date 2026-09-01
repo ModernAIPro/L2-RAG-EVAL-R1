@@ -2,20 +2,44 @@ import { timingSafeEqual } from "node:crypto";
 import path from "node:path";
 import { config } from "dotenv";
 import OpenAI from "openai";
+import { verify } from "@/lib/grounding";
+import { MAX_DISTANCE, excerpts, retrieve } from "@/lib/retrieval";
+import * as tracing from "@/lib/tracing";
 
-// On Vercel the key arrives from the project's Environment Variables, already in
-// process.env. Only when it is missing do we fall back to the repo-root .env used
-// by the labs locally. Either way it is read on the server and never sent to the
-// browser: only NEXT_PUBLIC_* names are inlined into the client bundle.
-if (!process.env.OPENAI_API_KEY) {
+// On Vercel these arrive from the project's Environment Variables, already in
+// process.env. Only when they are missing do we fall back to the repo-root .env
+// used by the labs locally. Either way they are read on the server and never sent
+// to the browser: only NEXT_PUBLIC_* names are inlined into the client bundle.
+// The LANGFUSE check matters on its own — the key may be present while the
+// tracing keys are not, which would silently leave local runs untraced.
+if (!process.env.OPENAI_API_KEY || !process.env.LANGFUSE_SECRET_KEY) {
   config({ path: path.join(process.cwd(), "..", ".env") });
 }
 
 const MODEL = process.env.MODEL ?? "gpt-4o-mini";
-const SYSTEM = "You are a helpful, concise assistant.";
 
-// LLM replies can outrun Vercel's short default function timeout.
+// Same wording as rag/chat.py. The refusal string is load-bearing: the grounding
+// check keys off it, and the client renders it as a refusal rather than an answer.
+const SYSTEM =
+  "You answer strictly from the numbered excerpts of Apple SEC filings given " +
+  "to you. Every factual claim must cite its excerpt like [1] or [2]. Figures " +
+  "differ between fiscal years, so always say which year a number comes from. " +
+  "You may not use anything you know about Apple from outside these excerpts, " +
+  "even if you are confident it is correct. If the excerpts do not contain the " +
+  "answer, reply exactly: NOT IN CORPUS — and nothing else. Earlier turns are " +
+  "for context only; each answer must rest on the excerpts given with it.";
+
+const CONDENSE =
+  "Rewrite the user's last message as a standalone question, resolving pronouns " +
+  "and anything left implicit from the conversation. Keep it short and keep any " +
+  "fiscal year explicit. Output only the question.";
+
+const HISTORY_TURNS = 6;
+
+// Retrieval adds an embedding call and a rewrite call before the answer starts.
 export const maxDuration = 60;
+
+type Message = { role: "user" | "assistant"; content: string };
 
 /**
  * The custom domain is a production domain, and Vercel's Standard Protection
@@ -35,6 +59,27 @@ function passwordOk(request: Request): boolean {
   return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 
+/** "and the year before?" embeds to nothing useful; against the history it
+ * becomes a question with a year in it, which retrieves the right page. */
+async function standalone(client: OpenAI, question: string, history: Message[]) {
+  if (history.length === 0) return question;
+
+  const transcript = history
+    .slice(-4)
+    .map((m) => `${m.role}: ${m.content}`)
+    .join("\n");
+
+  const reply = await client.chat.completions.create({
+    model: MODEL,
+    messages: [
+      { role: "system", content: CONDENSE },
+      { role: "user", content: `${transcript}\nuser: ${question}` },
+    ],
+  });
+
+  return reply.choices[0]?.message?.content?.trim() || question;
+}
+
 export async function POST(request: Request) {
   if (!passwordOk(request)) {
     return new Response("Wrong or missing password.", { status: 401 });
@@ -47,32 +92,89 @@ export async function POST(request: Request) {
     );
   }
 
-  const { messages } = await request.json();
-  const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-    baseURL: process.env.OPENAI_BASE_URL,
-  });
+  const { messages } = (await request.json()) as { messages: Message[] };
+  const question = messages[messages.length - 1]?.content ?? "";
+  const history = messages.slice(0, -1);
 
-  const completion = await client.chat.completions.create({
-    model: MODEL,
-    messages: [{ role: "system", content: SYSTEM }, ...messages],
-    stream: true,
-  });
+  // One trace per turn, grouped by the browser conversation it belongs to.
+  const trace = tracing.turn(question, request.headers.get("x-chat-session") ?? undefined);
 
-  // Forward the model's tokens to the browser as plain text, as they arrive.
+  const client = trace.wrap(
+    new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+      baseURL: process.env.OPENAI_BASE_URL,
+    }),
+  );
+
+  const query = await standalone(client, question, history);
+  trace.rewrote(question, query);
+
+  const hits = await retrieve(client, query);
+  trace.retrieved(query, hits);
+
+  const nearest = hits[0]?.distance ?? Infinity;
+  const contexts = hits.map((h) => h.text);
+
+  const encoder = new TextEncoder();
+  // Newline-delimited JSON, so one stream can carry the sources (known up front),
+  // the tokens, and the grounding verdict (only knowable once the answer ends).
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder();
-      for await (const chunk of completion) {
-        // The proxy's final chunk carries usage only, with no choices.
-        const piece = chunk.choices[0]?.delta?.content ?? "";
-        if (piece) controller.enqueue(encoder.encode(piece));
+      const send = (event: unknown) =>
+        controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
+
+      send({
+        type: "sources",
+        rewritten: query === question ? null : query,
+        sources: hits.map((h) => ({
+          source: h.source,
+          page: h.page,
+          form: h.form,
+          year: h.year,
+          distance: h.distance,
+        })),
+      });
+
+      let answer = "";
+
+      // Off-topic questions never reach the model, so it cannot answer from memory.
+      if (nearest > MAX_DISTANCE) {
+        answer = "NOT IN CORPUS";
+        send({ type: "token", text: answer });
+      } else {
+        const turn = `${excerpts(hits)}\n\nQuestion: ${question}`;
+        const completion = await client.chat.completions.create({
+          model: MODEL,
+          messages: [
+            { role: "system", content: SYSTEM },
+            ...history.slice(-HISTORY_TURNS),
+            { role: "user", content: turn },
+          ],
+          stream: true,
+        });
+
+        for await (const chunk of completion) {
+          // The proxy's final chunk carries usage only, with no choices.
+          const piece = chunk.choices[0]?.delta?.content ?? "";
+          if (piece) {
+            answer += piece;
+            send({ type: "token", text: piece });
+          }
+        }
       }
+
+      send({ type: "grounding", ...verify(answer, contexts) });
+
+      trace.graded(answer, contexts);
+      // Awaited before close: the instance can freeze the moment the response
+      // ends, and a queued batch that never left is a trace that never existed.
+      await trace.end();
+
       controller.close();
     },
   });
 
   return new Response(stream, {
-    headers: { "Content-Type": "text/plain; charset=utf-8" },
+    headers: { "Content-Type": "application/x-ndjson; charset=utf-8" },
   });
 }

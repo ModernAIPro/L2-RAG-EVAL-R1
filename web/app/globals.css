@@ -60,6 +60,21 @@ h1 {
   font-size: 0.9rem;
 }
 
+/* A turn is the bubble plus its retrieval trail, so they move together. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.turn.user {
+  align-items: flex-end;
+}
+
+.turn.assistant {
+  align-items: flex-start;
+}
+
 .bubble {
   max-width: 80%;
   padding: 0.65rem 0.9rem;
@@ -69,14 +84,41 @@ h1 {
 }
 
 .bubble.user {
-  align-self: flex-end;
   background: var(--user);
   color: #ffffff;
 }
 
 .bubble.assistant {
-  align-self: flex-start;
   background: var(--bot);
+}
+
+.meta,
+.warn {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.meta {
+  color: #8a8a8a;
+}
+
+.warn {
+  color: #b7791f;
+}
+
+/* Numbered to match the [n] citations in the answer above. */
+.sources {
+  margin: 0;
+  padding-left: 1.4rem;
+  color: #8a8a8a;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.distance {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
 }
 
 form {

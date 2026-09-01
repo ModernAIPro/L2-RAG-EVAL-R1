@@ -9,6 +9,11 @@
     "rotate": "bash scripts/rotate-password.sh"
   },
   "dependencies": {
+    "@langfuse/client": "^4.6.1",
+    "@langfuse/openai": "^4.6.1",
+    "@langfuse/otel": "^4.6.1",
+    "@langfuse/tracing": "^4.6.1",
+    "@opentelemetry/sdk-trace-base": "^2.11.0",
     "dotenv": "^17.4.2",
     "next": "16.3.3",
     "openai": "^7.5.0",

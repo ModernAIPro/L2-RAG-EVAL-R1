@@ -1,7 +1,11 @@
 import { LangfuseClient } from "@langfuse/client";
 import { observeOpenAI } from "@langfuse/openai";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { setLangfuseTracerProvider, startObservation } from "@langfuse/tracing";
+import {
+  LangfuseOtelSpanAttributes,
+  setLangfuseTracerProvider,
+  startObservation,
+} from "@langfuse/tracing";
 import { BasicTracerProvider } from "@opentelemetry/sdk-trace-base";
 import type OpenAI from "openai";
 import { verify } from "@/lib/grounding";
@@ -14,13 +18,23 @@ import type { Hit } from "@/lib/retrieval";
  * turn becomes a trace. Leave either key out and this degrades to no-ops: the
  * route behaves exactly as before and never calls Langfuse.
  *
- * SDK v4 is built on OpenTelemetry. The old `langfuse` v3 package had its own
- * transport and took an explicit `parent`; v4 emits OTel spans through a span
- * processor, and nesting normally comes from ambient context. We cannot rely on
- * that here — the answer is produced inside a ReadableStream callback that runs
- * after the handler returns, outside any active context — so the root span's
- * SpanContext is passed to children explicitly. That is why this file uses
- * `startObservation` rather than `startActiveObservation`.
+ * SDK v5 (@langfuse/*) is built on OpenTelemetry. Nesting normally comes from
+ * ambient context, and we cannot rely on that here — the answer is produced
+ * inside a ReadableStream callback that runs after the handler returns, outside
+ * any active context — so the root span's SpanContext is passed to children
+ * explicitly. That is why this file uses `startObservation` rather than
+ * `startActiveObservation`.
+ *
+ * Two v5 rules this file follows deliberately:
+ *
+ *   Input and output go on the root observation, never on the trace. v5
+ *   deprecates trace-level IO: `updateTrace` is gone and `setTraceIO` exists
+ *   only for legacy platform features. Langfuse derives what the trace shows
+ *   from the root observation, which is why nothing here sets it directly.
+ *
+ *   Session and other trace attributes come from `propagateAttributes`, which
+ *   is a callback wrapper. Creating the root span inside it is what stamps the
+ *   session onto the span at creation time.
  */
 
 function enabled(): boolean {
@@ -69,12 +83,21 @@ export function turn(question: string, session?: string): Turn {
 
   const { processor: proc, client: lf } = init();
 
+  // `input` is an observation attribute, not a trace one — see above.
   const root = startObservation("rag-turn", { input: question }, { asType: "chain" });
-  root.updateTrace({
-    name: "rag-turn",
-    input: question,
-    sessionId: session,
-    metadata: { surface: "web" },
+
+  // Session set as an explicit span attribute rather than via propagateAttributes.
+  // That helper is a callback wrapper that carries attributes in OpenTelemetry
+  // context, and context does not survive this route: the answer is produced in a
+  // ReadableStream callback outside it. Measured, not assumed — wrapping span
+  // creation in propagateAttributes produced traces with session=None. These are
+  // documented public attributes, and deliberately not TRACE_INPUT/TRACE_OUTPUT,
+  // which are the deprecated trace-level IO this file avoids.
+  // Set on the OTel span rather than via updateOtelSpanAttributes, which despite
+  // its name is typed for observation attributes and rejects these keys.
+  root.otelSpan.setAttributes({
+    [LangfuseOtelSpanAttributes.TRACE_NAME]: "rag-turn",
+    ...(session ? { [LangfuseOtelSpanAttributes.TRACE_SESSION_ID]: session } : {}),
   });
 
   // Captured once: children and the wrapped OpenAI client are parented to this.
@@ -121,10 +144,9 @@ export function turn(question: string, session?: string): Turn {
         refused: g.refused,
       };
 
-      // On the span and the trace both: the trace-level copy is what the list
-      // view shows, the span-level copy survives if trace attributes are pruned.
+      // Root observation only. Langfuse derives the trace's output from here, so
+      // a second trace-level write would be the deprecated path for no gain.
       root.update({ output: answer, metadata: detail });
-      root.updateTrace({ output: answer, metadata: detail });
 
       lf.score.trace(
         { otelSpan: root.otelSpan },

@@ -3,6 +3,7 @@ import path from "node:path";
 import { config } from "dotenv";
 import OpenAI from "openai";
 import { verify } from "@/lib/grounding";
+import { costOf } from "@/lib/pricing";
 import { MAX_DISTANCE, excerpts, retrieve } from "@/lib/retrieval";
 import * as tracing from "@/lib/tracing";
 
@@ -59,10 +60,17 @@ function passwordOk(request: Request): boolean {
   return given.length === wanted.length && timingSafeEqual(given, wanted);
 }
 
+/** One priced step of a turn. Tokens come from the API; the cost is derived. */
+type Step = { step: string; model: string; prompt: number; completion: number; usd: number };
+
+function step(name: string, model: string, prompt: number, completion: number): Step {
+  return { step: name, model, prompt, completion, usd: costOf(model, { prompt, completion }) };
+}
+
 /** "and the year before?" embeds to nothing useful; against the history it
  * becomes a question with a year in it, which retrieves the right page. */
 async function standalone(client: OpenAI, question: string, history: Message[]) {
-  if (history.length === 0) return question;
+  if (history.length === 0) return { query: question, usage: null as Step | null };
 
   const transcript = history
     .slice(-4)
@@ -77,7 +85,12 @@ async function standalone(client: OpenAI, question: string, history: Message[]) 
     ],
   });
 
-  return reply.choices[0]?.message?.content?.trim() || question;
+  return {
+    query: reply.choices[0]?.message?.content?.trim() || question,
+    // The rewrite is a real cost that is easy to forget: a follow-up turn calls
+    // the model twice, and this is the half nobody sees.
+    usage: step("rewrite", reply.model ?? MODEL, reply.usage?.prompt_tokens ?? 0, reply.usage?.completion_tokens ?? 0),
+  };
 }
 
 export async function POST(request: Request) {
@@ -106,10 +119,14 @@ export async function POST(request: Request) {
     }),
   );
 
-  const query = await standalone(client, question, history);
+  const steps: Step[] = [];
+
+  const { query, usage: rewriteUsage } = await standalone(client, question, history);
+  if (rewriteUsage) steps.push(rewriteUsage);
   trace.rewrote(question, query);
 
-  const hits = await retrieve(client, query);
+  const { hits, usage: embedUsage } = await retrieve(client, query);
+  steps.push(step("embed", embedUsage.model, embedUsage.prompt, embedUsage.completion));
   trace.retrieved(query, hits);
 
   const nearest = hits[0]?.distance ?? Infinity;
@@ -137,38 +154,63 @@ export async function POST(request: Request) {
 
       let answer = "";
 
-      // Off-topic questions never reach the model, so it cannot answer from memory.
-      if (nearest > MAX_DISTANCE) {
-        answer = "NOT IN CORPUS";
-        send({ type: "token", text: answer });
-      } else {
-        const turn = `${excerpts(hits)}\n\nQuestion: ${question}`;
-        const completion = await client.chat.completions.create({
-          model: MODEL,
-          messages: [
-            { role: "system", content: SYSTEM },
-            ...history.slice(-HISTORY_TURNS),
-            { role: "user", content: turn },
-          ],
-          stream: true,
-        });
+      try {
+        // Off-topic questions never reach the model, so it cannot answer from memory.
+        if (nearest > MAX_DISTANCE) {
+          answer = "NOT IN CORPUS";
+          send({ type: "token", text: answer });
+        } else {
+          const turn = `${excerpts(hits)}\n\nQuestion: ${question}`;
+          const completion = await client.chat.completions.create({
+            model: MODEL,
+            messages: [
+              { role: "system", content: SYSTEM },
+              ...history.slice(-HISTORY_TURNS),
+              { role: "user", content: turn },
+            ],
+            stream: true,
+          });
 
-        for await (const chunk of completion) {
-          // The proxy's final chunk carries usage only, with no choices.
-          const piece = chunk.choices[0]?.delta?.content ?? "";
-          if (piece) {
-            answer += piece;
-            send({ type: "token", text: piece });
+          for await (const chunk of completion) {
+            // The proxy's final chunk carries usage only, with no choices — which
+            // is exactly where the answer's token counts arrive.
+            if (chunk.usage) {
+              steps.push(
+                step(
+                  "answer",
+                  chunk.model ?? MODEL,
+                  chunk.usage.prompt_tokens ?? 0,
+                  chunk.usage.completion_tokens ?? 0,
+                ),
+              );
+            }
+            const piece = chunk.choices[0]?.delta?.content ?? "";
+            if (piece) {
+              answer += piece;
+              send({ type: "token", text: piece });
+            }
           }
         }
+
+        send({ type: "grounding", ...verify(answer, contexts) });
+        send({
+          type: "metrics",
+          steps,
+          prompt: steps.reduce((n, s) => n + s.prompt, 0),
+          completion: steps.reduce((n, s) => n + s.completion, 0),
+          usd: steps.reduce((n, s) => n + s.usd, 0),
+          // A refused turn still costs an embedding, and sometimes a rewrite.
+          refused: answer.trim().startsWith("NOT IN CORPUS"),
+        });
+        trace.graded(answer, contexts);
+      } finally {
+        // In a finally block because a failed turn is the one you most want to
+        // look at: without this, an error mid-stream would skip the flush and
+        // lose the trace that would explain it. Awaited before close, since the
+        // instance can freeze the moment the response ends and a queued batch
+        // that never left is a trace that never existed.
+        await trace.end();
       }
-
-      send({ type: "grounding", ...verify(answer, contexts) });
-
-      trace.graded(answer, contexts);
-      // Awaited before close: the instance can freeze the moment the response
-      // ends, and a queued batch that never left is a trace that never existed.
-      await trace.end();
 
       controller.close();
     },

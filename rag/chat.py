@@ -163,5 +163,10 @@ while True:
     history.append({"role": "user", "content": question})
     history.append({"role": "assistant", "content": answer})
 
-tracing.flush()  # the exporter batches; send what this session produced
+    # Per turn, not just at exit. An interactive session can stay open for a long
+    # time, and a turn that is still sitting in the queue is a turn you cannot
+    # look at yet. Costs about a second, after the answer is already on screen.
+    tracing.flush()
+
+tracing.flush()  # anything the last turn queued after its own flush
 print("\nbye.")

@@ -64,7 +64,13 @@ function load(): Index {
  * `2 - 2*dot` reproduces its distances exactly — which is what lets MAX_DISTANCE
  * carry the same meaning here as it does in the Python scripts.
  */
-export async function retrieve(client: OpenAI, query: string): Promise<Hit[]> {
+export type Retrieved = {
+  hits: Hit[];
+  /** The embedding call's own token usage, so the caller can price the turn. */
+  usage: { model: string; prompt: number; completion: number };
+};
+
+export async function retrieve(client: OpenAI, query: string): Promise<Retrieved> {
   const { chunks, vectors, dim } = load();
 
   const response = await client.embeddings.create({
@@ -92,7 +98,14 @@ export async function retrieve(client: OpenAI, query: string): Promise<Hit[]> {
   });
 
   scored.sort((a, b) => a.distance - b.distance);
-  return scored.slice(0, TOP_K);
+  return {
+    hits: scored.slice(0, TOP_K),
+    usage: {
+      model: response.model ?? EMBED_MODEL,
+      prompt: response.usage?.prompt_tokens ?? 0,
+      completion: 0,
+    },
+  };
 }
 
 /** The numbered blocks the model sees. Index i here is citation [i+1]. */

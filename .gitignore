@@ -26,3 +26,6 @@ node_modules/
 *.tsbuildinfo
 npm-debug.log*
 .env*
+
+# eval run output (regenerate with rag/evaluate.py --out)
+run.json

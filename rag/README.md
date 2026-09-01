@@ -116,6 +116,62 @@ measurement at all. Known weak points to measure first:
 `rag/.chroma/` is git-ignored. Delete it to start clean; `ingest.py` recreates it.
 Current corpus is 1,173 chunks from 313 pages across four filings.
 
+## Evaluation
+
+```bash
+python rag/evaluate.py --check            # golden answers really are in the corpus
+python rag/evaluate.py --retrieval-only   # no model calls, no cost
+python rag/evaluate.py --out run.json     # full run
+```
+
+`grounding.py` is a tripwire on a single answer. `golden.jsonl` plus
+`evaluate.py` are the other thing: 30 questions with known answers, so a change
+can be shown to help or hurt rather than argued about.
+
+Every expected figure was transcribed from the filings and `--check` re-verifies
+each one against the page it claims, so a typo in the golden file fails loudly
+instead of quietly becoming a wrong metric.
+
+Four kinds, because "correct" means something different for each:
+
+| kind | n | correct means |
+|---|---|---|
+| `answerable` | 20 | states the expected figure, does not refuse |
+| `derived` | 2 | the grounding check *fires* — the answer must compute something no filing contains |
+| `refuse_absent` | 5 | refuses. On-topic but absent, so retrieval scores it like a real hit and only the system prompt can catch it |
+| `refuse_offtopic` | 3 | refused by the distance gate before the model is called |
+
+Baseline, `gpt-4o-mini`, top-5, cutoff 1.2 — **27/30**:
+
+| kind | recall@5 | MRR | correct | grounded |
+|---|---|---|---|---|
+| answerable | 50.0% | 0.243 | 90.0% | 100% |
+| derived | 0.0% | — | 50.0% | 50% |
+| refuse_absent | — | — | 100% | 100% |
+| refuse_offtopic | — | — | 100% | 100% |
+
+Read it in this order:
+
+- **Nothing was answered that should have been refused: 0/8.** Both refusal
+  defences hold, including the prompt-injection case and a question about another
+  company. Off-topic questions sit at distance 1.6–1.8 against 0.4–0.9 for the
+  rest, so the gate has a wide margin.
+- **Retrieval is the weak half: recall@5 of 50%.** Two questions failed *only*
+  because of it — `rd-fy2025` and `q2-rd-fy2026` ask for figures that are in the
+  corpus, retrieval missed the page, and the model then refused correctly. Those
+  are false refusals caused by retrieval, and no prompt change will fix them.
+- **The grounding check missed a wrong answer.** `derived-rd-share` asks R&D as a
+  share of FY2025 sales. The model answered 7.5%, computed from **$31,370m —
+  which is FY2024's R&D, not FY2025's $34,550m** — against FY2025 sales. The
+  check passed it, because 31,370 really does appear in the retrieved text. The
+  answer is confidently wrong in exactly the way the corpus was assembled to
+  expose, and only the golden set caught it.
+
+That last one is the `label()` bug in `ingest.py` doing damage: every excerpt is
+headed `? ?` instead of `10-K FY2025`, so the model is told to name the fiscal
+year while being given no way to know it. Fix that, re-ingest, re-export, and
+re-run this eval — the numbers say whether it helped.
+
 ## Tracing
 
 Optional, and off unless three variables are set in `.env`:

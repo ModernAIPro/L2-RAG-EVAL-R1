@@ -52,8 +52,11 @@ are set — same three variables as the Python scripts, same names in v4. With
 either key missing, `lib/tracing.ts` returns no-ops and the route behaves exactly
 as before.
 
-The SDK is the **v4 scoped packages**, not the old unscoped `langfuse` npm
-package, which stopped at 3.38.20 and has no v4 release:
+The SDK is the **scoped `@langfuse/*` packages at 5.x**, not the old unscoped
+`langfuse` npm package, which stopped at 3.38.20. Note that the two SDKs version
+independently: Python's current line is 4.x and JavaScript's is 5.x, so matching
+the numbers across languages is the wrong instinct — Langfuse's own SDK-freshness
+check flags a JS v4 install as outdated.
 
 | Package | Role |
 |---|---|
@@ -63,7 +66,15 @@ package, which stopped at 3.38.20 and has no v4 release:
 | `@langfuse/client` | scores |
 | `@opentelemetry/sdk-trace-base` | the provider the processor is attached to |
 
-v4 is OpenTelemetry underneath, and that drives two decisions worth keeping:
+v5 is OpenTelemetry underneath, and that drives three decisions worth keeping:
+
+- **Input and output go on the root observation, never on the trace.** v5 removed
+  `updateTrace` and marks `setTraceIO` legacy; Langfuse derives what the trace
+  shows from the root observation. Nothing here writes trace-level IO.
+- **The session is set as an explicit span attribute**, not via
+  `propagateAttributes`. That helper carries attributes in OpenTelemetry context,
+  and context does not survive this route — wrapping span creation in it produced
+  traces with `session=None`. Measured, not assumed.
 
 - **`startObservation`, not `startActiveObservation`.** Nesting in v4 normally
   comes from ambient OTel context, but the answer is produced inside a

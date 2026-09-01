@@ -32,9 +32,10 @@ import type { Hit } from "@/lib/retrieval";
  *   only for legacy platform features. Langfuse derives what the trace shows
  *   from the root observation, which is why nothing here sets it directly.
  *
- *   Session and other trace attributes come from `propagateAttributes`, which
- *   is a callback wrapper. Creating the root span inside it is what stamps the
- *   session onto the span at creation time.
+ *   The session is written as an explicit span attribute, not through
+ *   `propagateAttributes`. That helper carries attributes in OpenTelemetry
+ *   context, and context is exactly what this route lacks — see the note at the
+ *   call site for what that produced when tried.
  */
 
 function enabled(): boolean {

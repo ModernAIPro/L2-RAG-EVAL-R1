@@ -1,0 +1,38 @@
+{
+  "generated": "2026-09-01T10:36:49-07:00",
+  "model": "gpt-4o-mini",
+  "questions": 30,
+  "correct": 27,
+  "scored": 30,
+  "recall_at_5": 0.5,
+  "answered_when_should_refuse": 0,
+  "should_refuse_total": 8,
+  "false_refusals": 2,
+  "answerable_total": 20,
+  "by_kind": [
+    {
+      "kind": "answerable",
+      "n": 20,
+      "correct": 18,
+      "recall_at_5": 0.5
+    },
+    {
+      "kind": "derived",
+      "n": 2,
+      "correct": 1,
+      "recall_at_5": 0.0
+    },
+    {
+      "kind": "refuse_absent",
+      "n": 5,
+      "correct": 5,
+      "recall_at_5": null
+    },
+    {
+      "kind": "refuse_offtopic",
+      "n": 3,
+      "correct": 3,
+      "recall_at_5": null
+    }
+  ]
+}

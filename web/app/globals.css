@@ -27,14 +27,132 @@ body {
   font-family: var(--font-geist-sans), system-ui, sans-serif;
 }
 
-.chat {
-  max-width: 44rem;
+/* Chat and panel side by side; the panel drops below on narrow screens so the
+   conversation never gets squeezed. */
+.layout {
+  display: flex;
+  gap: 1.5rem;
+  max-width: 72rem;
   margin: 0 auto;
   padding: 1.5rem 1rem;
   height: 100dvh;
+}
+
+.chat {
+  flex: 1;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.panel {
+  width: 19rem;
+  flex-shrink: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  border-left: 1px solid var(--line);
+  padding-left: 1.5rem;
+}
+
+.panel h2 {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #8a8a8a;
+  margin: 0 0 0.6rem;
+}
+
+.stats {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.stats > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.stats dt {
+  color: #8a8a8a;
+}
+
+.stats dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.stats dd.bad {
+  color: #d4453d;
+}
+
+.stats dd.good {
+  color: #2f855a;
+}
+
+.kinds {
+  width: 100%;
+  margin-top: 0.8rem;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.kinds th {
+  text-align: right;
+  font-weight: 500;
+  color: #8a8a8a;
+  padding: 0.2rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.kinds th:first-child,
+.kinds td:first-child {
+  text-align: left;
+}
+
+.kinds td {
+  text-align: right;
+  padding: 0.2rem 0;
+}
+
+.footnote {
+  margin: 0.7rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: #8a8a8a;
+}
+
+.footnote code {
+  font-size: 0.95em;
+}
+
+@media (max-width: 60rem) {
+  .layout {
+    flex-direction: column;
+    height: auto;
+    min-height: 100dvh;
+  }
+
+  .chat {
+    min-height: 70dvh;
+  }
+
+  .panel {
+    width: auto;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    padding-left: 0;
+    padding-top: 1.5rem;
+  }
 }
 
 h1 {
@@ -60,6 +178,21 @@ h1 {
   font-size: 0.9rem;
 }
 
+/* A turn is the bubble plus its retrieval trail, so they move together. */
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.turn.user {
+  align-items: flex-end;
+}
+
+.turn.assistant {
+  align-items: flex-start;
+}
+
 .bubble {
   max-width: 80%;
   padding: 0.65rem 0.9rem;
@@ -69,14 +202,41 @@ h1 {
 }
 
 .bubble.user {
-  align-self: flex-end;
   background: var(--user);
   color: #ffffff;
 }
 
 .bubble.assistant {
-  align-self: flex-start;
   background: var(--bot);
+}
+
+.meta,
+.warn {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.meta {
+  color: #8a8a8a;
+}
+
+.warn {
+  color: #b7791f;
+}
+
+/* Numbered to match the [n] citations in the answer above. */
+.sources {
+  margin: 0;
+  padding-left: 1.4rem;
+  color: #8a8a8a;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.distance {
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
 }
 
 form {

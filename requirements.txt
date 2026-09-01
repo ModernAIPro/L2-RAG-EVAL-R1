@@ -6,6 +6,11 @@ langgraph>=0.2
 # vector store for the RAG system (rag/rag.py). We pass embeddings in ourselves,
 # so Chroma's own default embedding model is never downloaded or used.
 chromadb>=0.5
+# PDF text extraction for the corpus (rag/ingest.py)
+pypdf>=4.0
+# tracing for the RAG scripts (rag/tracing.py). Optional at runtime: with no
+# LANGFUSE_* keys set, nothing is sent and the scripts run unchanged.
+langfuse>=4.15
 # request classification (labs/classify.py) — a local zero-shot model, no API key.
 # Heavy (~2GB) but installed once; MAI_CLASSIFY=0 runs the kit without it.
 transformers>=4.44

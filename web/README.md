@@ -1,7 +1,9 @@
 # Chatbot web app
 
-The browser version of `../chatbot.py` — same model, same class proxy, same
-conversation-history-in-a-list approach.
+The browser version of `../rag/chat.py` — grounded in the Apple filings, not in
+the model's memory. Every answer is built from retrieved excerpts, cites them by
+number, and is checked afterwards to see whether its figures actually appear in
+the text it was given.
 
 ```bash
 cd web
@@ -15,15 +17,67 @@ There is no `.env` here: the API route reads `../.env`, so your MAI key stays in
 the one place the labs already use it. Override the model with `MODEL=...` in
 that same file.
 
-## The two files that matter
+**The index must exist first.** `data/` is written by `python ../rag/export_web.py`
+and is committed to the repo, because Vercel builds from git. Re-run that export
+after every `rag/ingest.py` or the site answers from a stale index. See
+`../rag/README.md` for the details.
 
-- `app/api/chat/route.ts` — server-side. Takes the message list, calls the LLM,
-  streams tokens back as plain text. The key never reaches the browser.
-- `app/page.tsx` — client-side. Holds the messages in React state and appends
-  each streamed token to the last bubble.
+## The files that matter
 
-Like the CLI version, history is never trimmed, so a long conversation will
-eventually hit the context limit.
+- `app/api/chat/route.ts` — server-side. Rewrites a follow-up into a standalone
+  question, retrieves the top 5 chunks, refuses outright if the nearest is past
+  the distance cutoff, then streams the answer. The key never reaches the browser.
+- `lib/retrieval.ts` — loads `data/` once per warm instance and brute-forces the
+  1,173 dot products.
+- `lib/grounding.ts` — the figure/citation check, a port of `../rag/grounding.py`.
+  Keep the two in step or the site and the scripts will disagree about what
+  counts as grounded.
+- `lib/tracing.ts` — optional Langfuse tracing. See below.
+- `app/page.tsx` — client-side. Reads the newline-delimited JSON stream and
+  renders the sources and the grounding verdict under each answer. It mints one
+  session id per page load and sends it as `x-chat-session`, which is what makes
+  a conversation group as one session in tracing.
+
+The response is NDJSON rather than plain text because one stream has to carry
+three things that become known at different times: the sources (up front), the
+tokens (as they arrive), and the grounding verdict (only once the answer ends).
+
+Like the CLI version, history is never trimmed on the client, though the route
+only forwards the last few turns to the model.
+
+## Tracing (Langfuse v4)
+
+Off unless `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` and `LANGFUSE_BASE_URL`
+are set — same three variables as the Python scripts, same names in v4. With
+either key missing, `lib/tracing.ts` returns no-ops and the route behaves exactly
+as before.
+
+The SDK is the **v4 scoped packages**, not the old unscoped `langfuse` npm
+package, which stopped at 3.38.20 and has no v4 release:
+
+| Package | Role |
+|---|---|
+| `@langfuse/tracing` | `startObservation`, trace attributes |
+| `@langfuse/otel` | `LangfuseSpanProcessor` |
+| `@langfuse/openai` | `observeOpenAI` wrapper |
+| `@langfuse/client` | scores |
+| `@opentelemetry/sdk-trace-base` | the provider the processor is attached to |
+
+v4 is OpenTelemetry underneath, and that drives two decisions worth keeping:
+
+- **`startObservation`, not `startActiveObservation`.** Nesting in v4 normally
+  comes from ambient OTel context, but the answer is produced inside a
+  `ReadableStream` callback that runs after the handler returns — outside any
+  active context. The root span's `SpanContext` is therefore passed to children
+  and to `observeOpenAI` explicitly.
+- **A private tracer provider.** `setLangfuseTracerProvider` points the SDK at a
+  `BasicTracerProvider` we own, rather than registering globally where it would
+  contend with Next's own instrumentation.
+
+Both pipelines are flushed before the stream closes — spans through the
+processor's `forceFlush()`, scores through `score.flush()`. A serverless instance
+can freeze the instant the response ends, and a queued batch that never left is a
+trace that never existed.
 
 ## Deploying to Vercel
 
@@ -51,6 +105,7 @@ Development environments:
 | `OPENAI_API_KEY` | your MAI key | yes |
 | `OPENAI_BASE_URL` | `https://learn.modernaipro.com/api/llm/v1` | yes |
 | `MODEL` | e.g. `gpt-4o-mini` | no, defaults to `gpt-4o-mini` |
+| `EMBED_MODEL` | must match what `rag/ingest.py` used | no, defaults to `text-embedding-3-small` |
 | `CHAT_PASSWORD` | the shared password visitors type | yes in production |
 
 Do **not** add `HF_API_TOKEN` — the web app never uses it. Give a deployment only
